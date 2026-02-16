@@ -21,3 +21,6 @@ dist/
 # Контрольные точки в Jupyter notebook лучше оставить в стороне
 .ipynb_checkpoints
 
+# Файл конфигурации flake8
+.flake8
+

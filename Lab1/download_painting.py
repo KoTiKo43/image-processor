@@ -70,6 +70,10 @@ paintings_ids = get_paintings_ids(DATASET)
 painting_id = random.choice(paintings_ids)
 
 painting_json = get_painting_json(painting_id)
+while not painting_json['isPublicDomain']:
+    painting_id = random.choice(paintings_ids)
+    painting_json = get_painting_json(painting_id)
+
 painting_url = painting_json['primaryImage']
 
 painting_path = os.path.join(SAVE_DIR, f'{painting_id}.jpg')

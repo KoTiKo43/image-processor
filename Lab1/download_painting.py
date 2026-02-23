@@ -1,8 +1,9 @@
 """
-Скачивает и добавляет в папку изображение случайной картины из датасета
+Скачивает и добавляет в папку изображение случайной картины из датасета.
 """
 
 import csv
+import json
 import os
 import random
 
@@ -36,7 +37,7 @@ def get_paintings_ids(dataset_path: str) -> list:
 
 def get_painting_json(painting_id: int) -> dict:
     """
-    Извлекает json для определённой картины
+    Извлекает json для определённой картины.
 
     Args:
         painting_id (int): id картины.
@@ -51,7 +52,7 @@ def get_painting_json(painting_id: int) -> dict:
 
 def download_image(url: str, image_path: str) -> None:
     """
-    Скачивает и сохраняет изображение по ссылке
+    Скачивает и сохраняет изображение по ссылке.
 
     Args:
         url (str): Ссылка на скачивание.
@@ -63,18 +64,30 @@ def download_image(url: str, image_path: str) -> None:
         file.write(response.content)
 
 
-# Создаём папку для картин
-os.makedirs(SAVE_DIR, exist_ok=True)
+def main() -> None:
+    """
+    Скачивание случайной доступной картины из датасета.
+    """
+    # Создаём папку для картин
+    os.makedirs(SAVE_DIR, exist_ok=True)
 
-paintings_ids = get_paintings_ids(DATASET)
-painting_id = random.choice(paintings_ids)
+    paintings_ids = get_paintings_ids(DATASET)
 
-painting_json = get_painting_json(painting_id)
-while not painting_json['isPublicDomain']:
     painting_id = random.choice(paintings_ids)
     painting_json = get_painting_json(painting_id)
+    while not (painting_json['isPublicDomain'] and painting_json['primaryImage']):
+        painting_id = random.choice(paintings_ids)
+        painting_json = get_painting_json(painting_id)
 
-painting_url = painting_json['primaryImage']
+    painting_url = painting_json['primaryImage']
 
-painting_path = os.path.join(SAVE_DIR, f'{painting_id}.jpg')
-download_image(painting_url, painting_path)
+    painting_path = os.path.join(SAVE_DIR, f'{painting_id}.jpg')
+    download_image(painting_url, painting_path)
+
+    json_path = os.path.join(SAVE_DIR, f"{painting_id}.json")
+    with open(json_path, 'w', encoding='utf-8') as jf:
+        json.dump(painting_json, jf, indent=2, ensure_ascii=False)
+
+
+if __name__ == '__main__':
+    main()

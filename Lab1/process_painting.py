@@ -15,6 +15,7 @@ import time
 import cv2
 
 import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
 
 PAINTING_DIR = "paintings"
 
@@ -70,16 +71,11 @@ def convolve2d(img: np.ndarray, kernel: np.ndarray) -> np.ndarray:
         padded = np.pad(img, pad_width=((pad_h, pad_h), (pad_w, pad_w)),
                         mode='constant')
 
-        output = np.zeros_like(img, dtype=np.float32)
+        windows = sliding_window_view(padded, (kerh, kerw))
 
-        for i in range(imgh):
-            for j in range(imgw):
-                # Вырезаем область размером с ядро
-                region = padded[i:i+kerh, j:j+kerw]
-                # Добавляем получившееся в выходной массив
-                output[i, j] = np.sum(region * kernel)
+        result = np.tensordot(windows, kernel, axes=((2, 3), (0, 1)))
 
-        return output
+        return result
 
     if img.ndim == 3 and img.shape[2] == 3:
         blue, green, red = img[:, :, 0], img[:, :, 1], img[:, :, 2]

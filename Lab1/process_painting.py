@@ -62,7 +62,6 @@ def convolve2d(img: np.ndarray, kernel: np.ndarray) -> np.ndarray:
         Returns:
             output (ndarray): Массив с применённой маской.
         """
-        imgh, imgw = img.shape
         kerh, kerw = kernel.shape
 
         # Отступы для Zero padding
@@ -133,7 +132,7 @@ def sobel_transformation(img: np.ndarray) -> np.ndarray:
         img (ndarray): Матрица изображения (BGR или одноканал).
 
     Returns:
-        g (ndarray): Обработанное с помощью оператора Собеля изображение.
+        g_matrix (ndarray): Обработанное с помощью оператора Собеля изображение.
     """
     gy = np.array([(1, 2, 1),
                    (0, 0, 0),
@@ -211,7 +210,7 @@ def histogram_alignment(img: np.ndarray) -> np.ndarray:
 
 def image_name_addition(image_path: str, addition: str) -> str:
     """
-    Добавляет текст к названию изображения.
+    Добавляет суффикс к названию изображения.
 
     Args:
         image_path (str): Путь до изображения.

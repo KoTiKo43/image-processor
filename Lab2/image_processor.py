@@ -22,7 +22,7 @@ API_BASE = "https://collectionapi.metmuseum.org/public/collection/v1/objects"
 
 def timer(func: Callable) -> Callable:
     """Декоратор. Засекает время выполнения функции."""     # noqa: DCO020
-    @wraps
+    @wraps(func)
     def wrapper(*args, **kwargs):                           # noqa: ANN002, ANN003, ANN201
         """Оборачивает функцию таймером."""                 # noqa: DCO020
         start = time.perf_counter()
@@ -60,9 +60,14 @@ class ImageProcessor:
         Args:
             save_dir (str): Название папки сохранения.
         """
-        self.save_dir = save_dir
+        self._save_dir = save_dir
         os.makedirs(save_dir, exist_ok=True)
         self._register_default_operations()
+
+    @property
+    def save_dir(self) -> str:
+        """Доступ к директории сохранения (только для чтения)."""
+        return self._save_dir
 
     def _register_default_operations(self) -> None:
         """Регистрирует стандартные операции."""

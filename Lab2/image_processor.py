@@ -20,6 +20,20 @@ import requests
 API_BASE = "https://collectionapi.metmuseum.org/public/collection/v1/objects"
 
 
+def timer(func: Callable) -> Callable:
+    """Декоратор. Засекает время выполнения функции."""     # noqa: DCO020
+    @wraps
+    def wrapper(*args, **kwargs):                           # noqa: ANN002, ANN003, ANN201
+        """Оборачивает функцию таймером."""                 # noqa: DCO020
+        start = time.perf_counter()
+        result = func(*args, **kwargs)
+        end = time.perf_counter()
+        print(f'Function {func.__name__} executed in {end - start:.4f} seconds')
+        return result                                       # noqa: DCO030
+
+    return wrapper                                          # noqa: DCO030
+
+
 class OperationType(Enum):
     """Перечисление доступных операций обработки изображений."""
     GREYSCALE = "greyscale"
@@ -93,6 +107,7 @@ class ImageProcessor:
         """Операция выравнивания гистограммы изображения."""
         return artwork.histogram_alignment
 
+    @timer
     def download_random_image(self, dataset_path: str = "MetObjects.csv",
                               small_image: bool = False) -> Optional[Artwork]:
         """
@@ -148,6 +163,7 @@ class ImageProcessor:
 
         return Artwork(image, metadata)
 
+    @timer
     def process_artwork(self, artwork: Artwork,
                         operations: Dict[OperationType,
                                          Dict[str, Any]]) -> Dict[str, np.ndarray]:

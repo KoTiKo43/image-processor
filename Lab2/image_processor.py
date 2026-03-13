@@ -110,7 +110,7 @@ class ImageProcessor:
     @staticmethod
     def _histogram_op(artwork: Artwork) -> np.ndarray:
         """Операция выравнивания гистограммы изображения."""
-        return artwork.histogram_alignment
+        return artwork.histogram_alignment()
 
     @timer
     def download_random_image(self, dataset_path: str = "MetObjects.csv",
@@ -166,7 +166,7 @@ class ImageProcessor:
             metadata = json.load(f)
             self.log("Object created")
 
-        return Artwork(image, metadata)
+        return Artwork.create(image, metadata)
 
     @timer
     def process_artwork(self, artwork: Artwork,
@@ -211,4 +211,4 @@ class ImageProcessor:
         Args:
             message (str): Сообщение для логирования.
         """
-        print(f'[LOG][{time.strftime('%H:%M:%S')}] {message}')
+        print(f"[LOG][{time.strftime('%H:%M:%S')}] {message}")

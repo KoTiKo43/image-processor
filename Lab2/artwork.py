@@ -99,6 +99,29 @@ class Artwork(ABC):
         """Производит выравнивание гистограммы изображения."""
         pass
 
+    @staticmethod
+    def create(image: np.ndarray, metadata: dict) -> 'Artwork':
+        """
+        Фабричный метод: создаёт экземпляр подходящего подкласса Artwork
+        в зависимости от размерности изображения.
+
+        Args:
+            image (npdarray): Массив изображения.
+            metadata (Dict): Словарь метаданных.
+
+        Raises:
+            ValueError: Массив должен подходить под формат изображения.
+
+        Returns:
+            Объект для цветного или чёрно-белого изображения.
+        """
+        if image.ndim == 3 and image.shape[2] == 3:
+            return ArtworkColor(image, metadata)
+        elif image.ndim == 2:
+            return ArtworkBW(image, metadata)
+        else:
+            raise ValueError("Unsupported image shape: expected 2D (greyscale) or 3D (color) array")  # noqa: E501
+
     def __add__(self, other: 'Artwork') -> 'Artwork':
         """
         Перегрузка метода сложения изображений.
@@ -210,8 +233,8 @@ class ArtworkBW(Artwork):
                        (-2, 0, 2),
                        (-1, 0, 1)], dtype=np.float32)
 
-        grad_x = self.convolve2d(self._image, gx)
-        grad_y = self.convolve2d(self._image, gy)
+        grad_x = self.convolve2d(gx)
+        grad_y = self.convolve2d(gy)
 
         g_matrix = np.sqrt(grad_x**2 + grad_y**2)
         # Нормализация в диапазон 0-255
@@ -366,8 +389,8 @@ class ArtworkColor(Artwork):
                        (-2, 0, 2),
                        (-1, 0, 1)], dtype=np.float32)
 
-        grad_x = self.convolve2d(self._image, gx)
-        grad_y = self.convolve2d(self._image, gy)
+        grad_x = self.convolve2d(gx)
+        grad_y = self.convolve2d(gy)
 
         g_matrix = np.sqrt(grad_x**2 + grad_y**2)
         # Нормализация в диапазон 0-255

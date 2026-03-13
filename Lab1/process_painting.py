@@ -60,7 +60,7 @@ def convolve2d(img: np.ndarray, kernel: np.ndarray) -> np.ndarray:
             kernel (ndarray): Маска.
 
         Returns:
-            output (ndarray): Массив с применённой маской.
+            result (ndarray): Массив с применённой маской.
         """
         kerh, kerw = kernel.shape
 
@@ -100,7 +100,7 @@ def gaussian_kernel(size: int, sigma: float = 1.0) -> np.ndarray:
         kernel (np.ndarray): Ядро Гаусса.
     """
     # Создаём сетку координат
-    ax, ay = np.mgrid[-size//2 + 1:size//2 + 1, -size//2 + 1:size//2 + 1]
+    ax, ay = np.mgrid[-size // 2 + 1:size // 2 + 1, -size // 2 + 1:size // 2 + 1]
 
     kernel = np.exp(-(ax**2 + ay**2) / (2 * sigma**2))
     kernel /= kernel.sum()

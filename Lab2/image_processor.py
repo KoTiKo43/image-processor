@@ -21,10 +21,27 @@ API_BASE = "https://collectionapi.metmuseum.org/public/collection/v1/objects"
 
 
 def timer(func: Callable) -> Callable:
-    """Декоратор. Засекает время выполнения функции."""     # noqa: DCO020
+    """
+    Декоратор. Засекает время выполнения функции.
+
+    Args:
+        func (Callable): Функция для оборачивания.
+
+    Returns:
+        wrapper (Callable): Обёрнутая функция (с таймером).
+    """
     @wraps(func)
     def wrapper(*args, **kwargs):                           # noqa: ANN002, ANN003, ANN201
-        """Оборачивает функцию таймером."""                 # noqa: DCO020
+        """
+        Оборачивает функцию таймером.
+
+        Args:
+            args: Аргументы оборачиваемой функции (распаковываются).
+            kwargs: Аргументы оборачиваемой функции (распаковываются).
+
+        Returns:
+            result: Результат выполнения функции без обёртки.
+        """
         start = time.perf_counter()
         result = func(*args, **kwargs)
         end = time.perf_counter()

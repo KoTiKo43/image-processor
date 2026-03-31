@@ -229,10 +229,11 @@ def plot_heatmap(metrics: Dict[str, Dict[str, Any]]) -> None:
     data_norm = data.copy()
     for i in range(data.shape[1]):
         col_vals = data[:, i]
-        if col_vals.max() - col_vals.min() > 0:
-            data_norm[:, i] = (col_vals - col_vals.min()) / (col_vals.max() - col_vals.min())  # noqa E501
+        max_val = col_vals.max()
+        if max_val > 0:
+            data_norm[:, i] = col_vals / max_val
         else:
-            data_norm[:, i] = 0.0
+            data_norm[:, i] = 0
 
     plt.figure(figsize=(8, len(cols) * 0.5 + 1))
     im = plt.imshow(data_norm, cmap='RdYlGn_r', aspect='auto', vmin=0, vmax=1)

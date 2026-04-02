@@ -10,7 +10,7 @@
 средним.
 """
 from collections import Counter, defaultdict
-from typing import Any, Dict, Generator, Iterable, List, Tuple
+from typing import Any, Dict, Generator, List, Tuple
 
 import matplotlib.pyplot as plt
 
@@ -21,7 +21,8 @@ import pandas as pd
 
 FILE_PATH = 'MetObjects.csv'
 CHUNK_SIZE = 10000
-CATEGORICAL_COLUMNS = ['Department', 'Culture', 'Medium', 'Classification', 'Country']
+DATE_RANGE = (-5000, 2026)
+CATEGORICAL_COLUMNS = ['Culture', 'Medium', 'Classification', 'Country']
 
 
 def read_chunks(filepath: str,
@@ -30,79 +31,118 @@ def read_chunks(filepath: str,
     Генератор, читающий файл частями.
 
     Args:
-        filepath: путь к CSV-файлу.
-        chunksize: размер чанка.
+        filepath (str): Путь к CSV-файлу.
+        chunksize (int): Размер чанка.
 
     Yields:
-        pd.DataFrame: очередной чанк данных.
+        pd.DataFrame: Очередной чанк данных.
     """
     reader = pd.read_csv(filepath, chunksize=chunksize, encoding='utf-8-sig')
     for chunk in reader:
         yield chunk
 
 
-def process_department_data(
-    chunk_iter: Generator[pd.DataFrame, None, None]
-) -> Generator[Dict[str, Dict[str, Any]], None, None]:
+def prepare_chunk(
+    chunk_iter: Generator[pd.DataFrame, None, None],
+) -> Generator[pd.DataFrame, None, None]:
     """
-    Генератор, накапливающий для каждого отдела статистику и список дат.
+    Генератор, приводящий данные к нужному виду.
+
+    - Отбирает нужные столбцы.
+    - Преобразует Object Begin Date в число.
+    - Фильтрует по разумному диапазону.
+    - Удаляет строки с NaN в дате.
 
     Args:
-        chunk_iter: генератор чанков.
+        chunk_iter: Итератор чанков.
 
     Yields:
-        Словарь: ключ – отдел, значение – словарь с полями:
-            count, sum, sum2, dates.
+        pd.DataFrame: Очищенный чанк.
     """
-    dept_data = defaultdict(lambda: {'count': 0, 'sum': 0.0, 'sum2': 0.0, 'dates': []})
     for chunk in chunk_iter:
-        df = chunk[['Department', 'Object Begin Date']].copy()
+        df = chunk[['Department', 'Object Begin Date'] + CATEGORICAL_COLUMNS].copy()
+        # Преобразуем дату
         df['Object Begin Date'] = pd.to_numeric(df['Object Begin Date'], errors='coerce')
-        # Расчёт интерквартильного размаха
-        q1 = df['Object Begin Date'].quantile(0.25)
-        q3 = df['Object Begin Date'].quantile(0.75)
-        iqr = q3 - q1
-        lower_bound = q1 - 1.5 * iqr
-        upper_bound = q3 + 1.5 * iqr
-        # Отрезание того, что не попадает в интерквартильный размах
-        df = df[(df['Object Begin Date'] >= lower_bound) & (df['Object Begin Date'] <= upper_bound)]  # noqa E501
+        # Фильтруем даты
+        mask = (df['Object Begin Date'] >= DATE_RANGE[0]) & (df['Object Begin Date'] <= DATE_RANGE[1])  # noqa E501
+        df = df[mask]
         df = df.dropna(subset=['Object Begin Date'])
-        for _, row in df.iterrows():
-            dept = row['Department']
-            date = row['Object Begin Date']
-            dept_data[dept]['count'] += 1
-            dept_data[dept]['sum'] += date
-            dept_data[dept]['sum2'] += date * date
-            dept_data[dept]['dates'].append(date)
-
-    yield dept_data
+        yield df
 
 
-def compute_stats(
-    dept_data: Dict[str, Dict[str, Any]]
-) -> Tuple[Dict[str, Dict[str, Any]], str]:
+def aggregate_pipeline(
+    chunk_iter: Generator[pd.DataFrame, None, None],
+) -> Generator[Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame], None, None]:
     """
-    Вычисляет финальные метрики для каждого отдела.
+    Генератор, накапливающий статистику в pandas-структурах без списков и словарей.
 
     Args:
-        dept_data: накопленная статистика (count, sum, sum2, dates).
+        chunk_iter: Генератор
+
+    Yields:
+        dept_stats: DataFrame с индексом Department и столбцами ['count', 'sum', 'sum2'].
+        year_counts: DataFrame с мультииндексом (Department, Year) и столбцом ['count'].
+        cat_df: DataFrame с индексами - значениями категорий и столбцами из CATEGORICAL_COLUMNS.  # noqa E501
+    """
+    dept_stats = pd.DataFrame(columns=['count', 'sum', 'sum2']).astype(
+        {'count': 'int64', 'sum': 'float64', 'sum2': 'float64'})
+    year_counts = pd.DataFrame(columns=['count']).astype({'count': 'int64'})
+    cat_df = pd.DataFrame(columns=CATEGORICAL_COLUMNS).astype('int64')
+
+    for df in chunk_iter:
+        # Статистика по отделам (count, sum, sum2)
+        agg_dept = df.groupby('Department')['Object Begin Date'].agg(
+            count='size',
+            sum='sum',
+            sum2=lambda x: (x ** 2).sum(),
+        )
+        dept_stats = dept_stats.add(agg_dept, fill_value=0)
+
+        # Количество объектов по годам для каждого отдела
+        year_counts_chunk = df.groupby(['Department', 'Object Begin Date']).size().rename('count')
+        if not year_counts_chunk.empty:
+            year_counts = year_counts.add(year_counts_chunk.to_frame(), fill_value=0)
+
+        # Категориальные поля: собираем частоты в один DataFrame
+        cat_chunk = pd.DataFrame()
+        for col in CATEGORICAL_COLUMNS:
+            values = df[col].dropna().astype(str).str.strip()
+            values = values[values != '']
+            if values.empty:
+                continue
+
+            freq = values.value_counts().rename(col)
+            cat_chunk = pd.concat([cat_chunk, freq.to_frame()], axis=1)
+
+        if cat_chunk.empty:
+            cat_df = cat_df.add(cat_chunk, fill_value=0).fillna(0).astype('int64')
+
+    yield dept_stats, year_counts, cat_df
+
+
+def compute_department_stats(dept_stats: pd.DataFrame) -> Tuple[pd.DataFrame, str]:
+    """
+    По накопленным агрегатам dept_stats (count, sum, sum2) вычисляет:
+    mean, std, 95% CI, 95% scatter.
+
+    Args:
+        dept_stats (DataFrame): Накопленные агрегаты
 
     Returns:
-        results: словарь с метриками (mean, std, ci_lower, ci_upper,
-                 scatter_lower, scatter_upper, dates).
-        max_std_dept: отдел с максимальным стандартным отклонением.
+        df_stats (DataFrame): Метрики и имя отдела с максимальным std.
+        max_std_dept (str): Департамент с максимальным std.
     """
-    results = {}
-    max_std = -1.0
-    max_std_dept = ''
-    for dept, data in dept_data.items():
-        cnt = data['count']
-        mean = data['sum'] / cnt
-        variance = (data['sum2'] / cnt) - mean ** 2
+    # dept_stats имеет индекс Department и столбцы count, sum, sum2
+    results = []
+    for dept, row in dept_stats.iterrows():
+        cnt = row['count']
+        mean = row['sum'] / cnt
+        variance = (row['sum2'] / cnt) - mean**2
         std = np.sqrt(variance)
         ci_margin = 1.96 * std / np.sqrt(cnt)
         scatter_margin = 1.96 * std
-        results[dept] = {
+        results.append({
+            'Department': dept,
             'count': cnt,
             'mean': mean,
             'std': std,
@@ -110,78 +150,71 @@ def compute_stats(
             'ci_upper': mean + ci_margin,
             'scatter_lower': mean - scatter_margin,
             'scatter_upper': mean + scatter_margin,
-            'dates': data['dates']
-        }
-        if std > max_std:
-            max_std = std
-            max_std_dept = dept
+        })
 
-    return results, max_std_dept
+    df_stats = pd.DataFrame(results)
+    if df_stats.empty:
+        return df_stats, ''
+
+    max_std_dept = df_stats.loc[df_stats['std'].idxmax(), 'Department']
+
+    return df_stats, max_std_dept
 
 
-def compute_categorical_metrics(filepath: str, columns: List[str],
-                                chunksize: int = 10000) -> Dict[str, Dict[str, Any]]:
+def compute_categorical_metrics(cat_df: pd.DataFrame) -> pd.DataFrame:
     """
-    Вычисляет метрики для категориальных полей.
+    По DataFrame cat_df (столбцы — категориальные поля, индекс — значения категорий)
+    вычисляет Gini, нормализованную энтропию, ENC.
 
     Args:
-        filepath (str): Путь к CSV-файлу.
-        columns (List): Список имён столбцов.
-        chunksize (int): Размер куска.
+        cat_df: Стандартные метрики.
 
     Returns:
-        Dict: для каждого поля gini, norm_entropy, enc, num_categories, total_entries.
+        metrics_list (DataFrame): Итоговые метрики.
     """
-    counters = {col: Counter() for col in columns}
-    reader = pd.read_csv(filepath, chunksize=chunksize, encoding='utf-8-sig',
-                         usecols=columns)
-    for chunk in reader:
-        for col in columns:
-            values = chunk[col].dropna().astype(str).str.strip()
-            values = values[values != '']
-            counters[col].update(values)
-
-    metrics = {}
-    for col, cnt in counters.items():
-        n = sum(cnt.values())
+    metrics_list = []
+    for col in cat_df.columns:
+        counts = cat_df[col]
+        n = counts.sum()
         if n == 0:
             continue
 
-        probs = np.array([c / n for c in cnt.values()])
-        gini = 1 - np.sum(probs**2)
-        entropy = -np.sum(probs * np.log(probs))
-        n_counts = len(cnt)
-        norm_entropy = entropy / np.log(n_counts) if n_counts > 1 else 0
+        probs = counts / n
+        gini = 1 - (probs**2).sum()
+        entropy = -(probs * np.log(probs)).sum()
+        n_categories = (counts > 0).sum()
+        norm_entropy = entropy / np.log(n_categories) if n_categories > 1 else 0
         enc = np.exp(entropy)
-        metrics[col] = {
-            'gini': gini,
-            'norm_entropy': norm_entropy,
-            'enc': enc,
-            'num_categories': n_counts,
-            'total_entries': n
-        }
+        metrics_list.append({
+            'Column': col,
+            'Gini': gini,
+            'NormEntropy': norm_entropy,
+            'ENC': enc,
+            'Categories': n_categories,
+            'Total': n,
+        })
 
-    return metrics
+    return pd.DataFrame(metrics_list)
 
 
-def plot_department_ages(results: Dict[str, Dict[str, Any]]) -> None:
+def plot_department_ages(df_stats: pd.DataFrame) -> None:
     """
     Построение столбцовой диаграммы.
 
     Args:
-        results (Dict): Полученный пайплайном результат для визуализации.
+        df_stats (DataFrame): Полученный пайплайном результат для визуализации.
     """
-    depts = list(results.keys())
-    means = [results[d]['mean'] for d in depts]
-    ci_err = [results[d]['ci_upper'] - results[d]['mean'] for d in depts]
-    scat_err = [results[d]['scatter_upper'] - results[d]['mean'] for d in depts]
+    depts = df_stats['Department']
+    means = df_stats['mean']
+    ci_err = df_stats['ci_upper'] - means
+    scat_err = df_stats['scatter_upper'] - means
 
     plt.figure(figsize=(12, 6))
     x = np.arange(len(depts))
     plt.bar(x, means, yerr=ci_err, capsize=5, label='95% CI', alpha=0.7)
     plt.errorbar(x, means, yerr=scat_err, fmt='o', color='red', label='95% scatter')
     plt.xticks(x, depts, rotation=45, ha='right')
-    plt.ylabel('Average Object Begin Date')
+    plt.ylabel('Average Object Begin Date (year)')
     plt.title('Average Age by Department')
     plt.legend()
     plt.tight_layout()
@@ -189,20 +222,21 @@ def plot_department_ages(results: Dict[str, Dict[str, Any]]) -> None:
     plt.show()
 
 
-def plot_timeline(department: str, dates: List[float]) -> None:
+def plot_timeline(year_counts: pd.DataFrame, department: str) -> None:
     """
-    Временной график количества созданных объектов со скользящим средним.
+    Временной график для заданного отдела.
 
     Args:
-        department: название отдела.
-        dates: список годов создания.
+        year_counts: DataFrame с мультииндексом (Department, Year) и столбцом 'count'.
+        department (str): Департамент.
     """
-    year_counts = pd.Series(dates).value_counts().sort_index()
+    dept_year_counts = year_counts.xs(department, level='Department')
+    dept_year_counts = dept_year_counts.sort_index()
     window = 10
-    rolling_avg = year_counts.rolling(window=window, center=True).mean()
+    rolling_avg = dept_year_counts['count'].rolling(window=window, center=True).mean()
 
     plt.figure(figsize=(12, 6))
-    plt.plot(year_counts.index, year_counts.values, alpha=0.5, label='Count per year')
+    plt.plot(dept_year_counts.index, dept_year_counts['count'], alpha=0.5, label='Count per year')  # noqa E501
     plt.plot(rolling_avg.index, rolling_avg.values, color='red',
              label=f'Moving avg (window={window})')
     plt.xlabel('Year')
@@ -214,26 +248,25 @@ def plot_timeline(department: str, dates: List[float]) -> None:
     plt.show()
 
 
-def plot_heatmap(metrics: Dict[str, Dict[str, Any]]) -> None:
+def plot_heatmap(metrics_df: pd.DataFrame) -> None:
     """
     Строит тепловую карту метрик (нормированных по столбцам).
 
     Args:
-        metrics (Dict): Словарь метрик для каждого поля.
+        metrics_df (DataFrame): Словарь метрик для каждого поля.
     """
-    cols = list(metrics.keys())
-    metric_names = ['gini', 'norm_entropy', 'enc']
-    data = np.array([[metrics[col][m] for m in metric_names] for col in cols])
+    cols = metrics_df['Column'].values
+    metric_names = ['Gini', 'NormEntropy', 'ENC']
+    data = metrics_df[metric_names].values
 
     # Нормализация по столбцам
     data_norm = data.copy()
     for i in range(data.shape[1]):
         col_vals = data[:, i]
-        max_val = col_vals.max()
-        if max_val > 0:
-            data_norm[:, i] = col_vals / max_val
+        if col_vals.max() - col_vals.min() > 0:
+            data_norm[:, i] = col_vals / col_vals.max()
         else:
-            data_norm[:, i] = 0
+            data_norm[:, i] = 0.0
 
     plt.figure(figsize=(8, len(cols) * 0.5 + 1))
     im = plt.imshow(data_norm, cmap='RdYlGn_r', aspect='auto', vmin=0, vmax=1)
@@ -246,25 +279,23 @@ def plot_heatmap(metrics: Dict[str, Dict[str, Any]]) -> None:
     plt.show()
 
     print("\nMetrics per column:")
-    for col in cols:
-        m = metrics[col]
-        print(f"{col}: Gini={m['gini']:.4f}, NormEntropy={m['norm_entropy']:.4f}, "
-              f"ENC={m['enc']:.2f} (categories={m['num_categories']})")
+    print(metrics_df.to_string(index=False))
 
 
 def main() -> None:
     """Запуск анализа."""
     chunks = read_chunks(FILE_PATH, CHUNK_SIZE)
-    data_iter = process_department_data(chunks)
-    dept_data = next(data_iter)
-    results, max_std_dept = compute_stats(dept_data)
-    print(f"Отдел с максимальным разбросом (std): {max_std_dept}")
-    plot_department_ages(results)
-    dates_for_timeline = results[max_std_dept]['dates']
-    plot_timeline(max_std_dept, dates_for_timeline)
+    prepared = prepare_chunk(chunks)
+    aggregator = aggregate_pipeline(prepared)
+    dept_stats, year_counts, cat_df = next(aggregator)
 
-    metrics = compute_categorical_metrics(FILE_PATH, CATEGORICAL_COLUMNS, CHUNK_SIZE)
-    plot_heatmap(metrics)
+    df_stats, max_std_dept = compute_department_stats(dept_stats)
+    print(f"Отдел с максимальным разбросом (std): {max_std_dept}")
+    plot_department_ages(df_stats)
+    plot_timeline(year_counts, max_std_dept)
+
+    metrics_df = compute_categorical_metrics(cat_df)
+    plot_heatmap(metrics_df)
 
 
 if __name__ == '__main__':

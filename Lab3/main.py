@@ -46,7 +46,7 @@ def prepare_chunk(
     chunk_iter: Generator[pd.DataFrame, None, None],
 ) -> Generator[pd.DataFrame, None, None]:
     """
-    Генератор, приводящий данные к нужному виду.
+    Генератор, приводящий данные к нужному для обработки виду.
 
     - Отбирает нужные столбцы.
     - Преобразует Object Begin Date в число.
@@ -74,7 +74,7 @@ def aggregate_pipeline(
     chunk_iter: Generator[pd.DataFrame, None, None],
 ) -> Generator[Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame], None, None]:
     """
-    Генератор, накапливающий статистику в pandas-структурах без списков и словарей.
+    Генератор, накапливающий статистику в pandas-структурах.
 
     Args:
         chunk_iter: Генератор
@@ -84,38 +84,53 @@ def aggregate_pipeline(
         year_counts: DataFrame с мультииндексом (Department, Year) и столбцом ['count'].
         cat_df: DataFrame с индексами - значениями категорий и столбцами из CATEGORICAL_COLUMNS.  # noqa E501
     """
-    dept_stats = pd.DataFrame(columns=['count', 'sum', 'sum2']).astype(
-        {'count': 'int64', 'sum': 'float64', 'sum2': 'float64'})
-    year_counts = pd.DataFrame(columns=['count']).astype({'count': 'int64'})
-    cat_df = pd.DataFrame(columns=CATEGORICAL_COLUMNS).astype('int64')
+    # 1. Статистика по отделам (индекс – Department)
+    dept_stats = pd.DataFrame(columns=["count", "sum", "sum2"]).astype(
+        {"count": "int64", "sum": "float64", "sum2": "float64"}
+    )
+
+    # 2. Количество объектов по годам для каждого отдела
+    # Создаём пустой DataFrame с мультииндексом из двух уровней
+    empty_multi_index = pd.MultiIndex(
+        levels=[[], []],
+        codes=[[], []],
+        names=["Department", "Object Begin Date"]
+    )
+    year_counts = pd.DataFrame(index=empty_multi_index, columns=["count"]).astype({"count": "int64"})
+
+    # 3. Категориальные поля: частоты для каждой колонки
+    # Пустой индекс типа object, чтобы позже объединять с категориальными значениями
+    cat_df = pd.DataFrame(
+        index=pd.Index([], dtype=object),
+        columns=CATEGORICAL_COLUMNS
+    ).fillna(0).astype("int64")
 
     for df in chunk_iter:
-        # Статистика по отделам (count, sum, sum2)
-        agg_dept = df.groupby('Department')['Object Begin Date'].agg(
-            count='size',
-            sum='sum',
-            sum2=lambda x: (x ** 2).sum(),
+        # 1. Агрегация для департаментов (count, sum, sum квадратов)
+        agg_dept = df.groupby("Department")["Object Begin Date"].agg(
+            count="size",
+            sum="sum",
+            sum2=lambda x: (x**2).sum(),
         )
         dept_stats = dept_stats.add(agg_dept, fill_value=0)
 
-        # Количество объектов по годам для каждого отдела
-        year_counts_chunk = df.groupby(['Department', 'Object Begin Date']).size().rename('count')
-        if not year_counts_chunk.empty:
-            year_counts = year_counts.add(year_counts_chunk.to_frame(), fill_value=0)
+        # 2. Количество объектов по годам для каждого департамента
+        year_chunk = df.groupby(["Department", "Object Begin Date"]).size().rename("count")
+        if not year_chunk.empty:
+            # Преобразуем Series в DataFrame с одной колонкой
+            year_chunk_df = year_chunk.to_frame()
+            year_counts = year_counts.add(year_chunk_df, fill_value=0)
 
-        # Категориальные поля: собираем частоты в один DataFrame
-        cat_chunk = pd.DataFrame()
+        # 3. Категориальные поля: частоты для каждой колонки
         for col in CATEGORICAL_COLUMNS:
+            # Очистка: удаляем NaN, пустые строки и лишние пробелы
             values = df[col].dropna().astype(str).str.strip()
-            values = values[values != '']
+            values = values[values != ""]
             if values.empty:
                 continue
-
-            freq = values.value_counts().rename(col)
-            cat_chunk = pd.concat([cat_chunk, freq.to_frame()], axis=1)
-
-        if cat_chunk.empty:
-            cat_df = cat_df.add(cat_chunk, fill_value=0).fillna(0).astype('int64')
+            # Частоты значений в виде DataFrame с одной колонкой col
+            freq = values.value_counts().rename(col).to_frame()
+            cat_df = cat_df.add(freq, fill_value=0).fillna(0).astype("int64")
 
     yield dept_stats, year_counts, cat_df
 

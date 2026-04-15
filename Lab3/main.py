@@ -9,8 +9,7 @@
 построить временной график создания объектов, со скользящим
 средним.
 """
-from collections import Counter, defaultdict
-from typing import Any, Dict, Generator, List, Tuple
+from typing import Generator, Tuple
 
 import matplotlib.pyplot as plt
 
@@ -70,69 +69,85 @@ def prepare_chunk(
         yield df
 
 
-def aggregate_pipeline(
+def aggregate_chunk(
     chunk_iter: Generator[pd.DataFrame, None, None],
 ) -> Generator[Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame], None, None]:
     """
-    Генератор, накапливающий статистику в pandas-структурах.
+    Генератор, обрабатывающий один чанк и возвращающий три агрегата:
+    - статистика по отделам,
+    - счётчик (отдел, год),
+    - частоты категориальных значений.
 
     Args:
-        chunk_iter: Генератор
+        chunk_iter: Генератор по чанкам
 
     Yields:
-        dept_stats: DataFrame с индексом Department и столбцами ['count', 'sum', 'sum2'].
-        year_counts: DataFrame с мультииндексом (Department, Year) и столбцом ['count'].
-        cat_df: DataFrame с индексами - значениями категорий и столбцами из CATEGORICAL_COLUMNS.  # noqa E501
+        Кортеж трёх промежуточных датафреймов
     """
-    # 1. Статистика по отделам (индекс – Department)
-    dept_stats = pd.DataFrame(columns=["count", "sum", "sum2"]).astype(
-        {"count": "int64", "sum": "float64", "sum2": "float64"}
-    )
-
-    # 2. Количество объектов по годам для каждого отдела
-    # Создаём пустой DataFrame с мультииндексом из двух уровней
-    empty_multi_index = pd.MultiIndex(
-        levels=[[], []],
-        codes=[[], []],
-        names=["Department", "Object Begin Date"]
-    )
-    year_counts = pd.DataFrame(index=empty_multi_index, columns=["count"]).astype({"count": "int64"})
-
-    # 3. Категориальные поля: частоты для каждой колонки
-    # Пустой индекс типа object, чтобы позже объединять с категориальными значениями
-    cat_df = pd.DataFrame(
-        index=pd.Index([], dtype=object),
-        columns=CATEGORICAL_COLUMNS
-    ).fillna(0).astype("int64")
-
     for df in chunk_iter:
-        # 1. Агрегация для департаментов (count, sum, sum квадратов)
-        agg_dept = df.groupby("Department")["Object Begin Date"].agg(
+        dept_agg = df.groupby("Department")["Object Begin Date"].agg(
             count="size",
             sum="sum",
             sum2=lambda x: (x**2).sum(),
         )
-        dept_stats = dept_stats.add(agg_dept, fill_value=0)
 
-        # 2. Количество объектов по годам для каждого департамента
-        year_chunk = df.groupby(["Department", "Object Begin Date"]).size().rename("count")
-        if not year_chunk.empty:
-            # Преобразуем Series в DataFrame с одной колонкой
-            year_chunk_df = year_chunk.to_frame()
-            year_counts = year_counts.add(year_chunk_df, fill_value=0)
+        year_agg = df.groupby(["Department", "Object Begin Date"]).size().rename("count")
 
-        # 3. Категориальные поля: частоты для каждой колонки
+        year_agg_df = year_agg.to_frame() if not year_agg.empty else pd.DataFrame(columns=["count"])  # noqa E501
+
+        cat_agg = pd.DataFrame(index=pd.Index([], dtype=object),
+                               columns=CATEGORICAL_COLUMNS)
         for col in CATEGORICAL_COLUMNS:
-            # Очистка: удаляем NaN, пустые строки и лишние пробелы
             values = df[col].dropna().astype(str).str.strip()
             values = values[values != ""]
-            if values.empty:
-                continue
-            # Частоты значений в виде DataFrame с одной колонкой col
-            freq = values.value_counts().rename(col).to_frame()
-            cat_df = cat_df.add(freq, fill_value=0).fillna(0).astype("int64")
+            if not values.empty:
+                freq = values.value_counts().rename(col).to_frame()
+                cat_agg = cat_agg.add(freq, fill_value=0)
 
-    yield dept_stats, year_counts, cat_df
+        yield dept_agg, year_agg_df, cat_agg
+
+
+def collect_aggregates(
+    agg_iter: Generator[Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame], None, None],
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Принимает итератор агрегатов чанков и собирает итоговые таблицы.
+
+    Args:
+        agg_iter: Генератор, возвращающий три датафрейма на каждой итерации
+
+    Returns:
+        Три сагрегированных из генератора датафрейма
+    """
+    dept_stats = pd.DataFrame(columns=["count", "sum", "sum2"]).astype(
+        {"count": "int64", "sum": "float64", "sum2": "float64"},
+    )
+
+    empty_multi_index = pd.MultiIndex(
+        levels=[[], []], codes=[[], []],
+        names=["Department", "Object Begin Date"],
+    )
+    year_counts = pd.DataFrame(index=empty_multi_index,
+                               columns=["count"]).astype({"count": "int64"})
+
+    cat_df = pd.DataFrame(
+        index=pd.Index([], dtype=object),
+        columns=CATEGORICAL_COLUMNS,
+    )
+
+    for dept_agg, year_agg, cat_agg in agg_iter:
+        dept_stats = dept_stats.add(dept_agg, fill_value=0)
+
+        if not year_agg.empty:
+            year_counts = year_counts.add(year_agg, fill_value=0)
+
+        if not cat_agg.empty:
+            cat_df = cat_df.add(cat_agg, fill_value=0)
+
+    if not cat_df.empty:
+        cat_df = cat_df.fillna(0).astype("int64")
+
+    return dept_stats, year_counts, cat_df
 
 
 def compute_department_stats(dept_stats: pd.DataFrame) -> Tuple[pd.DataFrame, str]:
@@ -301,8 +316,8 @@ def main() -> None:
     """Запуск анализа."""
     chunks = read_chunks(FILE_PATH, CHUNK_SIZE)
     prepared = prepare_chunk(chunks)
-    aggregator = aggregate_pipeline(prepared)
-    dept_stats, year_counts, cat_df = next(aggregator)
+    aggregated_chunk = aggregate_chunk(prepared)
+    dept_stats, year_counts, cat_df = collect_aggregates(aggregated_chunk)
 
     df_stats, max_std_dept = compute_department_stats(dept_stats)
     print(f"Отдел с максимальным разбросом (std): {max_std_dept}")

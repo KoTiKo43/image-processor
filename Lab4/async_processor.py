@@ -72,20 +72,20 @@ class AsyncImageDownloader:
             None: Если изображение не в публичном доступе.
             index, object_id, painting_path, json_path: Если всё прошло успешно.
         """
-        painting_json = self.fetch_json(session, object_id)
-        if (not painting_json['isPublicDomain'] and painting_json('PrimaryImage')):
+        painting_json = await self.fetch_json(session, object_id)
+        if not (painting_json.get('isPublicDomain') and painting_json.get('primaryImage')):
             self.log("Image is not accessible. Skipping...")
             return None
 
         painting_path = os.path.join(self.save_dir, f"{index}_{object_id}_original.jpg")
         json_path = os.path.join(self.save_dir, f"{index}_{object_id}_metadata.json")
 
-        async with aiofiles.open(json_path, 'wb') as jf:
-            await json.dump(painting_json, jf, indent=2, ensure_ascii=False)
+        async with aiofiles.open(json_path, 'w', encoding="utf-8") as jf:
+            await jf.write(json.dumps(painting_json, indent=2, ensure_ascii=False))
 
         self.log(f"Saved metadata {index} (ID: {object_id})")
 
-        painting_url = painting_json['PrimaryImage']
+        painting_url = painting_json.get('primaryImage')
         await self.download_image(session, painting_url, painting_path)
 
         self.log(f"Saved image {index} (ID: {object_id})")

@@ -72,30 +72,23 @@ class AsyncImageDownloader:
             None: Если изображение не в публичном доступе.
             index, object_id, painting_path, json_path: Если всё прошло успешно.
         """
+        print(f"[DOWNLOAD] Image {index} (ID: {object_id}) started")
         painting_json = await self.fetch_json(session, object_id)
         if not (painting_json.get('isPublicDomain') and painting_json.get('primaryImage')):
-            self.log("Image is not accessible. Skipping...")
+            print(f"[DOWNLOAD] Image {index} (ID: {object_id}) skipped (not public domain)")
             return None
 
-        painting_path = os.path.join(self.save_dir, f"{index}_{object_id}_original.jpg")
-        json_path = os.path.join(self.save_dir, f"{index}_{object_id}_metadata.json")
+        original_dir = os.path.join(self.save_dir, "original")
+        os.makedirs(original_dir, exist_ok=True)
+
+        painting_path = os.path.join(original_dir, f"{index}_{object_id}_original.jpg")
+        json_path = os.path.join(original_dir, f"{index}_{object_id}_metadata.json")
 
         async with aiofiles.open(json_path, 'w', encoding="utf-8") as jf:
             await jf.write(json.dumps(painting_json, indent=2, ensure_ascii=False))
 
-        self.log(f"Saved metadata {index} (ID: {object_id})")
-
         painting_url = painting_json.get('primaryImage')
         await self.download_image(session, painting_url, painting_path)
 
-        self.log(f"Saved image {index} (ID: {object_id})")
+        print(f"[DOWNLOAD] Image {index} (ID: {object_id}) finished -> {painting_path}")
         return index, object_id, painting_path, json_path
-
-    def log(self, message: str) -> None:
-        """
-        Логирует события в консоли.
-
-        Args:
-            message (str): Сообщение для логирования.
-        """
-        print(f"[LOG][{time.strftime('%H:%M:%S')}] {message}")

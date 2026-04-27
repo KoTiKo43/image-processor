@@ -16,14 +16,12 @@ from async_processor import AsyncImageDownloader
 
 import cv2
 
-import numpy as np
-
 
 DATASET = "MetObjects.csv"
 
 
 def get_random_id_paintings(dataset_path: str = DATASET,
-                            num: int = 1) -> np.ndarray[int]:
+                            num: int = 1) -> list[int]:
     """
     Скачивание случайных картин из датасета в заданном количестве.
 
@@ -39,10 +37,10 @@ def get_random_id_paintings(dataset_path: str = DATASET,
         painting_ids = [int(row['Object ID']) for row in reader
                         if row['Classification'] == 'Paintings']
 
-    return np.array(random.sample(painting_ids, min(num, len(painting_ids))))
+    return random.sample(painting_ids, min(num, len(painting_ids)))
 
 
-async def download_all(ids: np.ndarray[int], downloader: AsyncImageDownloader) -> list:
+async def download_all(ids: list[int], downloader: AsyncImageDownloader) -> list:
     """
     Запускает скачивание изображений в асинхронном режиме.
 

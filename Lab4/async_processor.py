@@ -54,9 +54,11 @@ class AsyncImageDownloader:
             url: Ссылка на изображение.
             filepath: Путь для сохранения изображения.
         """
+        start = time.perf_counter()
         async with session.get(url) as resp:
             async with aiofiles.open(filepath, 'wb') as f:
                 await f.write(await resp.read())
+        print(f"[DOWNLOAD] Image downloaded in {time.perf_counter() - start:.2f} s")
 
     async def download_one(self, session: aiohttp.ClientSession, object_id: str,
                            index: int) -> tuple[int, int, str, str]:

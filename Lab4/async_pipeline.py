@@ -24,6 +24,7 @@ import numpy as np
 
 DATASET = "MetObjects.csv"
 
+
 def get_random_id_paintings(dataset_path: str = DATASET,
                             num: int = 1) -> list[int]:
     """
@@ -58,29 +59,21 @@ async def download_pipeline(ids: list[int], downloader: AsyncImageDownloader,
     """
     async with aiohttp.ClientSession() as session:
         corouts = [downloader.download_one(session, obj_id, index)
-                   for obj_id, index in enumerate(ids, start=1)]
+                   for index, obj_id in enumerate(ids, start=1)]
 
         for corout in asyncio.as_completed(corouts):
             result = await corout
-            if result is None:
-                continue
-
-            index, obj_id, image_path, json_path = result
-
-            image = await asyncio.to_thread(cv2.imread, image_path)
-            async with aiofiles.open(json_path, 'r', encoding="utf-8") as jf:
-                image_json = json.loads(await jf.read())
-
-            yield index, obj_id, image, image_json
+            if result is not None:
+                yield result
 
 
-def process_image(image: np.ndarray, image_json: dict, index: int, obj_id: int,
+def process_image(image_path: str, image_json: dict, index: int, obj_id: int,
                   ) -> Tuple[int, int, dict]:
     """
     Обработка изображения.
 
     Args:
-        image: Массив изображения.
+        image_path: Массив к изображению.
         image_json: Метаданные изображения.
         index: Порядковый номер изображения.
         obj_id: ID изображения.
@@ -89,6 +82,7 @@ def process_image(image: np.ndarray, image_json: dict, index: int, obj_id: int,
         index, obj_id, results: Индекс, ID и словарь с результатами.
     """
     print(f"[PROCESS][PID {os.getpid()}] Image {index} (ID: {obj_id}) started")
+    image = cv2.imread(image_path)
     artwork = Artwork.create(image, image_json)
 
     grey = artwork.color_to_greyscale()
@@ -109,19 +103,120 @@ def process_image(image: np.ndarray, image_json: dict, index: int, obj_id: int,
     return index, obj_id, results
 
 
-async def process_image_pipeline(source: AsyncGenerator[Tuple[int, int, np.ndarray, dict]],
-                                 save_dir: str,
+async def process_image_pipeline(source: AsyncGenerator[Tuple[int, int, np.ndarray, dict]],  # noqa E501
                                  ) -> AsyncGenerator[Tuple[int, int, dict]]:
     """
-    
-    """
-    with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
-        futures = []
-        for index, obj_id, img_path, json_path in source:
-            future = executor.submit(
-                process_image, img_path, json_path, index, obj_id, save_dir)
-            futures.append(future)
+    Генератор обработки.
 
-        for completed in futures:
-            index, obj_id, results = await completed
-            yield index, obj_id, results
+    Args:
+        source: Асинхронный генератор с данными об изображении.
+
+    Yields:
+        item: Кортеж с индексом, ID объекта и словарём обработанных изображений.
+    """
+    result_queue: asyncio.Queue = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+    background_tasks: list[asyncio.Task] = []
+
+    async def wait_and_enqueue(future: asyncio.Future) -> None:
+        """
+        Ждёт завершения обработки и отправляет результат в очередь.
+
+        Args:
+            future: Объект Future.
+        """
+        res = await future
+        await result_queue.put((res[0], res[1], res[2]))
+
+    with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
+        async for index, obj_id, img_path, json_path in source:
+            future = loop.run_in_executor(
+                executor,
+                process_image,
+                img_path,
+                json_path,
+                index,
+                obj_id,
+            )
+            task = asyncio.create_task(
+                wait_and_enqueue(future)
+            )
+            background_tasks.append(task)
+
+        if background_tasks:
+            await asyncio.gather(*background_tasks)
+
+        await result_queue.put(None)
+
+    while True:
+        item = await result_queue.get()
+        if item is None:
+            break
+
+        yield item
+
+
+async def save_pipeline(source: AsyncGenerator[Tuple[int, int, dict], None],
+                        save_dir: str) -> AsyncGenerator[str, None]:
+    """
+    Генератор сохранения.
+    Сохраняет файлы неблокирующе через asyncio.to_thread.
+
+    Args:
+        source: Асинхронный генератор с данными об изображении.
+        save_dir: Папка сохранения.
+
+    Yields:
+        str: Строку о том, что файл сохранён.
+    """
+    processed_dir = os.path.join(save_dir, "processed")
+    os.makedirs(processed_dir, exist_ok=True)
+
+    async for index, obj_id, results in source:
+        for mode, img in results.items():
+            path = os.path.join(processed_dir, f"{index}_{obj_id}_{mode}.jpg")
+
+            await asyncio.to_thread(cv2.imwrite, path, img)
+            print(f"[SAVE] Image {index} (ID: {obj_id}) {mode} saved")
+
+        yield f"Image {index} (ID: {obj_id}) fully saved"
+
+
+async def run_pipeline(num_images: int, save_dir: str = "paintings") -> None:
+    """
+    Запускает пайплайн генераторов.
+
+    Args:
+        num_images: Количество изображений.
+        save_dir: Путь для сохранения изображений.
+    """
+    ids = get_random_id_paintings(DATASET, num_images)
+    downloader = AsyncImageDownloader(save_dir=save_dir)
+
+    start = time.perf_counter()
+
+    stage1 = download_pipeline(ids, downloader)
+    stage2 = process_image_pipeline(stage1)
+    stage3 = save_pipeline(stage2, save_dir)
+
+    count = 0
+    async for msg in stage3:
+        print(f"[PIPELINE] {msg}")
+        count += 1
+
+    elapsed = time.perf_counter() - start
+    print(f"[PIPELINE] Completed {count} images in {elapsed:.2f} seconds")
+
+
+def main() -> None:
+    """main функция"""
+    if len(sys.argv) < 2:
+        print("Usage: python pipeline.py <number of images>")
+        sys.exit(1)
+
+    num = int(sys.argv[1])
+    asyncio.run(run_pipeline(num))
+
+
+if __name__ == "__main__":
+    main()

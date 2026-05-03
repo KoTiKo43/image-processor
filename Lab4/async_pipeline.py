@@ -103,7 +103,7 @@ def process_image(image_path: str, image_json: dict, index: int, obj_id: int,
     return index, obj_id, results
 
 
-async def process_image_pipeline(source: AsyncGenerator[Tuple[int, int, np.ndarray, dict]],  # noqa E501
+async def process_image_pipeline(source: AsyncGenerator[Tuple[int, int, str, str]],
                                  ) -> AsyncGenerator[Tuple[int, int, dict]]:
     """
     Генератор обработки.
@@ -114,9 +114,8 @@ async def process_image_pipeline(source: AsyncGenerator[Tuple[int, int, np.ndarr
     Yields:
         item: Кортеж с индексом, ID объекта и словарём обработанных изображений.
     """
-    result_queue: asyncio.Queue = asyncio.Queue()
+    result_queue = asyncio.Queue()
     loop = asyncio.get_running_loop()
-    background_tasks: list[asyncio.Task] = []
 
     async def wait_and_enqueue(future: asyncio.Future) -> None:
         """
@@ -128,25 +127,20 @@ async def process_image_pipeline(source: AsyncGenerator[Tuple[int, int, np.ndarr
         res = await future
         await result_queue.put((res[0], res[1], res[2]))
 
-    with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
-        async for index, obj_id, img_path, json_path in source:
-            future = loop.run_in_executor(
-                executor,
-                process_image,
-                img_path,
-                json_path,
-                index,
-                obj_id,
-            )
-            task = asyncio.create_task(
-                wait_and_enqueue(future)
-            )
-            background_tasks.append(task)
-
-        if background_tasks:
-            await asyncio.gather(*background_tasks)
+    async def process_pool() -> None:
+        """
+        Запускает мультипроцессорную обработку изображений.
+        """
+        with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
+            async with asyncio.TaskGroup() as tg:
+                async for index, obj_id, img_path, json_path in source:
+                    future = loop.run_in_executor(
+                        executor, process_image, img_path, json_path, index, obj_id)
+                    tg.create_task(wait_and_enqueue(future))
 
         await result_queue.put(None)
+
+    process_pool_task = asyncio.create_task(process_pool())
 
     while True:
         item = await result_queue.get()
@@ -154,6 +148,8 @@ async def process_image_pipeline(source: AsyncGenerator[Tuple[int, int, np.ndarr
             break
 
         yield item
+
+    await process_pool_task
 
 
 async def save_pipeline(source: AsyncGenerator[Tuple[int, int, dict], None],

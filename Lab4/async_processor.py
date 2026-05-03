@@ -58,6 +58,7 @@ class AsyncImageDownloader:
         async with session.get(url) as resp:
             async with aiofiles.open(filepath, 'wb') as f:
                 await f.write(await resp.read())
+
         print(f"[DOWNLOAD] Image downloaded in {time.perf_counter() - start:.2f} s")
 
     async def download_one(self, session: aiohttp.ClientSession, object_id: str,
@@ -76,8 +77,8 @@ class AsyncImageDownloader:
         """
         print(f"[DOWNLOAD] Image {index} (ID: {object_id}) started")
         painting_json = await self.fetch_json(session, object_id)
-        if not (painting_json.get('isPublicDomain') and painting_json.get('primaryImage')):
-            print(f"[DOWNLOAD] Image {index} (ID: {object_id}) skipped (not public domain)")
+        if not (painting_json.get('isPublicDomain') and painting_json.get('primaryImage')):  # noqa E501
+            print(f"[DOWNLOAD] Image {index} (ID: {object_id}) skipped (not public domain)")  # noqa E501
             return None
 
         original_dir = os.path.join(self.save_dir, "original")

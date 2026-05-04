@@ -310,13 +310,21 @@ def run_analysis(output_dir: str, csv_path: str = DATASET_PATH) -> None:
     """
     logger.info(f"Starting analysis of {csv_path}")
     try:
+        logger.info("Step 1/5: Reading CSV in chunks...")
         chunks = read_chunks(csv_path, CHUNK_SIZE)
+
+        logger.info("Step 2/5: Preparing data (filtering and cleaning)...")
         prepared = prepare_chunk(chunks)
+
+        logger.info("Step 3/5: Aggregating chunks...")
         aggregated = aggregate_chunk(prepared)
+
+        logger.info("Step 4/5: Collecting aggregates...")
         dept_stats, year_counts, cat_df = collect_aggregates(aggregated)
 
+        logger.info("Step 5/5: Computing statistics and plotting...")
         df_stats, max_std_dept = compute_department_stats(dept_stats)
-        logger.info(f"Department with max std: {max_std_dept}")
+        logger.info(f"Department with maximum std: {max_std_dept} (std={df_stats[df_stats['Department'] == max_std_dept]['std'].values[0]:.1f})")  # noqa E501
 
         plot_department_ages(df_stats)
         plt.savefig(f"{output_dir}/department_ages.png")

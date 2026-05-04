@@ -1,2 +1,2 @@
 from .models import Artwork, ArtworkBW, ArtworkColor
-from .processing import AsyncImageProcessor, ImageProcessor
+from .processing import AsyncImagePipeline, ImageProcessor

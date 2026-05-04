@@ -5,7 +5,8 @@ import json
 from ..logging_config import logger
 
 
-def prepare_download_list(csv_path: str, output_path: str,
+def prepare_download_list(csv_path: str = "data/MetObjects.csv",
+                          output_path: str = "data/to_download.json",
                           classification: str = "Paintings") -> list:
     """
     Читает CSV, отбирает строки с заданной классификацией и сохраняет их Object ID в JSON.

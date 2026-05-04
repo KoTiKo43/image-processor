@@ -37,3 +37,34 @@ def timer(func: Callable) -> Callable:
         return result
 
     return wrapper
+
+
+def async_timer(func: Callable) -> Callable:
+    """
+    Декоратор. Засекает время выполнения асинхронной функции.
+
+    Args:
+        func (Callable): Функция для оборачивания.
+
+    Returns:
+        wrapper (Callable): Обёрнутая функция (с таймером).
+    """
+    @wraps(func)
+    async def wrapper(*args, **kwargs):                     # noqa: ANN002, ANN003, ANN201
+        """
+        Оборачивает асинхронную функцию таймером.
+
+        Args:
+            args: Аргументы оборачиваемой функции (распаковываются).
+            kwargs: Аргументы оборачиваемой функции (распаковываются).
+
+        Returns:
+            result: Результат выполнения функции без обёртки.
+        """
+        start = time.perf_counter()
+        result = await func(*args, **kwargs)
+        end = time.perf_counter()
+        logger.info(f'Async function {func.__name__} executed in {end - start:.4f} seconds')  # noqa E501
+        return result
+
+    return wrapper

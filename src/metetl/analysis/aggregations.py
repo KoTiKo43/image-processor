@@ -1,24 +1,16 @@
-"""
-Исследование и оценка информации о датасете с помощью пайплайна.
-Вариант 1
-Анализ возраста объектов по отделам
-1. Для каждого из отделов музея (Department) найти средний возраст
-объектов (Object Begin Date), 95% доверительный интервал и 95%
-интервал рассеяния. Построить столбцовую диаграмму.
-2. Для отдела музея с максимальным разбросом дат создания объектов
-построить временной график создания объектов, со скользящим
-средним.
-"""
+"""Анализ датасета: статистика по отделам, графики."""
 from typing import Generator, Tuple
 
 import matplotlib.pyplot as plt
+
+from metetl.logging_config import logger
 
 import numpy as np
 
 import pandas as pd
 
 
-FILE_PATH = 'MetObjects.csv'
+DATASET_PATH = 'data/MetObjects.csv'
 CHUNK_SIZE = 10000
 DATE_RANGE = (-5000, 2026)
 CATEGORICAL_COLUMNS = ['Culture', 'Medium', 'Classification', 'Country']
@@ -248,8 +240,6 @@ def plot_department_ages(df_stats: pd.DataFrame) -> None:
     plt.title('Average Age by Department')
     plt.legend()
     plt.tight_layout()
-    plt.savefig('Lab3\\department_age.png')
-    plt.show()
 
 
 def plot_timeline(year_counts: pd.DataFrame, department: str) -> None:
@@ -274,8 +264,6 @@ def plot_timeline(year_counts: pd.DataFrame, department: str) -> None:
     plt.title(f'Creation timeline for {department}')
     plt.legend()
     plt.tight_layout()
-    plt.savefig('Lab3\\timeline.png')
-    plt.show()
 
 
 def plot_heatmap(metrics_df: pd.DataFrame) -> None:
@@ -305,28 +293,46 @@ def plot_heatmap(metrics_df: pd.DataFrame) -> None:
     plt.colorbar(im, label='Normalized value (higher = better quality)')
     plt.title('Categorical Data Quality Metrics')
     plt.tight_layout()
-    plt.savefig('Lab3\\categorical_heatmap.png')
-    plt.show()
 
-    print("\nMetrics per column:")
-    print(metrics_df.to_string(index=False))
+    logger.info(f"Metrics per column: {metrics_df.to_string(index=False)}")
 
 
-def main() -> None:
-    """Запуск анализа."""
-    chunks = read_chunks(FILE_PATH, CHUNK_SIZE)
-    prepared = prepare_chunk(chunks)
-    aggregated_chunk = aggregate_chunk(prepared)
-    dept_stats, year_counts, cat_df = collect_aggregates(aggregated_chunk)
+def run_analysis(output_dir: str, csv_path: str = DATASET_PATH) -> None:
+    """
+    Запускает полный анализ и сохраняет графики.
 
-    df_stats, max_std_dept = compute_department_stats(dept_stats)
-    print(f"Отдел с максимальным разбросом (std): {max_std_dept}")
-    plot_department_ages(df_stats)
-    plot_timeline(year_counts, max_std_dept)
+    Args:
+        output_dir: Папка для сохранения графиков.
+        csv_path: Путь к датасету.
 
-    metrics_df = compute_categorical_metrics(cat_df)
-    plot_heatmap(metrics_df)
+    Raises:
+        Exception: Ошибка анализа.
+    """
+    logger.info(f"Starting analysis of {csv_path}")
+    try:
+        chunks = read_chunks(csv_path, CHUNK_SIZE)
+        prepared = prepare_chunk(chunks)
+        aggregated = aggregate_chunk(prepared)
+        dept_stats, year_counts, cat_df = collect_aggregates(aggregated)
 
+        df_stats, max_std_dept = compute_department_stats(dept_stats)
+        logger.info(f"Department with max std: {max_std_dept}")
 
-if __name__ == '__main__':
-    main()
+        plot_department_ages(df_stats)
+        plt.savefig(f"{output_dir}/department_ages.png")
+        plt.close()
+
+        if max_std_dept and max_std_dept in year_counts.index.get_level_values(0):
+            plot_timeline(year_counts, max_std_dept)
+            plt.savefig(f"{output_dir}/timeline.png")
+            plt.close()
+
+        metrics_df = compute_categorical_metrics(cat_df)
+        plot_heatmap(metrics_df)
+        plt.savefig(f"{output_dir}/categorical_heatmap.png")
+        plt.close()
+
+        logger.info(f"Analysis finished. Plots saved to {output_dir}")
+    except Exception as e:
+        logger.error(f"Analysis failed: {e}")
+        raise

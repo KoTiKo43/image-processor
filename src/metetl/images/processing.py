@@ -6,7 +6,7 @@ import os
 from concurrent.futures import ProcessPoolExecutor
 from enum import Enum
 from random import choice
-from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Tuple
+from typing import Any, AsyncGenerator, Callable, Dict, Generator, List, Optional, Tuple
 
 import aiofiles
 
@@ -37,15 +37,22 @@ class OperationType(Enum):
     HISTOGRAM = "histogram"
 
 
-class ImageProcessor:
+default_operations: Dict[OperationType, Dict[str, Any]] = {
+    OperationType.GREYSCALE: {},
+    OperationType.BLUR: {"size": 5, "sigma": 1.0},
+    OperationType.SOBEL: {},
+    OperationType.GAMMA: {"gamma": 1.5},
+    OperationType.HISTOGRAM: {}
+}
+
+
+class ImagePipeline:
     """
     Позволяет управлять обработкой изображений.
     """
-
-    # Реестр операций: ключ - OperationType, значение - функция обработки
-    _operations: Dict[OperationType, Callable] = {}
-
-    def __init__(self, save_dir: str = DEFAULT_SAVE_DIR) -> None:
+    def __init__(self, save_dir: str = DEFAULT_SAVE_DIR, engine: str = "python",
+                 operations: Optional[Dict[OperationType, Dict[str, Any]]] = None,
+                 ) -> None:
         """
         Задание директории сохранения изображения.
         Создаёт директорию, если её ещё нет.
@@ -53,183 +60,143 @@ class ImageProcessor:
 
         Args:
             save_dir (str): Название папки сохранения.
+            engine (str): Способ обработки (python или c).
+            operations: Операции, которые нужно проделать с изображением.
         """
-        self._save_dir = save_dir
+        self.save_dir = save_dir
+        self.engine = engine
+        self.operations = default_operations if not operations else operations
         os.makedirs(save_dir, exist_ok=True)
-        self._operations: Dict[OperationType, callable] = {}
-        self._register_default_operations()
 
-    @property
-    def save_dir(self) -> str:
-        """Доступ к директории сохранения (только для чтения)."""
-        return self._save_dir
-
-    def _register_default_operations(self) -> None:
-        """Регистрирует стандартные операции."""
-        self.register_operation(OperationType.GREYSCALE, self._greyscale_op)
-        self.register_operation(OperationType.BLUR, self._blur_op)
-        self.register_operation(OperationType.SOBEL, self._sobel_op)
-        self.register_operation(OperationType.GAMMA, self._gamma_op)
-        self.register_operation(OperationType.HISTOGRAM, self._histogram_op)
-
-    def register_operation(self, op_type: OperationType, func: Callable) -> None:
+    def download_generator(self, ids: List[int]
+                           ) -> Generator[Tuple[int, int, str, str], None, None]:
         """
-        Регистрирует новую операцию.
+        Генератор синхронной загрузки.
 
         Args:
-            op_type (OperationType): Тип исполняемой операции.
-            func (Callable): Исполняемая функция операции.
+            ids: Список айди изображений.
+
+        Yields:
+            Индекс, айди объекта, пути к изображению и метаданным.
         """
-        self._operations[op_type] = func
-
-    @staticmethod
-    def _greyscale_op(artwork: Artwork) -> np.ndarray:
-        """Операция преобразования в градации серого."""
-        return artwork.color_to_greyscale()
-
-    @staticmethod
-    def _blur_op(artwork: Artwork, size: int = 5, sigma: float = 1.0) -> np.ndarray:
-        """Операция сглаживания изображения."""
-        return artwork.gaussian_blur(size=size, sigma=sigma)
-
-    @staticmethod
-    def _sobel_op(artwork: Artwork) -> np.ndarray:
-        """Операция выделения границ с помощью оператора Собеля."""
-        return artwork.sobel_transformation()
-
-    @staticmethod
-    def _gamma_op(artwork: Artwork, gamma: float = 1.0) -> np.ndarray:
-        """Операция коррекции гаммы изображения."""
-        return artwork.gamma_correction(gamma=gamma)
-
-    @staticmethod
-    def _histogram_op(artwork: Artwork) -> np.ndarray:
-        """Операция выравнивания гистограммы изображения."""
-        return artwork.histogram_alignment()
-
-    @timer
-    def download_random_image(self, dataset_path: str = "MetObjects.csv",
-                              small_image: bool = False) -> Optional[Artwork]:
-        """
-        Загружает в директорию изображение случайной картины из датасета.
-
-        Args:
-            dataset_path (str): Путь к текстовому файлу датасета.
-            small_image (bool): Флаг для скачивания сжатой версии изображения.
-
-        Returns:
-            Artwork: Объект типа Artwork, содержащий изображение и его метаданные.
-        """
-        try:
-            paintings_ids = []
-
-            logger.debug("Reading dataset for random image download")
-
-            with open(dataset_path, 'r', encoding='utf-8-sig') as f:
-                logger.info("Dataset reading starts...")
-
-                reader = csv.DictReader(f)
-                paintings_ids = []
-                for row in reader:
-                    if row['Classification'] == 'Paintings':
-                        paintings_ids.append(int(row['Object ID']))
-
-            logger.debug(f"Found {len(paintings_ids)} paintings in dataset")
-
-            painting_id = choice(paintings_ids)
-            painting_json = requests.get(API_BASE + f'/{painting_id}').json()
-            while not (painting_json['isPublicDomain'] and painting_json['primaryImage']):
-                painting_id = choice(paintings_ids)
-                painting_json = requests.get(API_BASE + f'/{painting_id}').json()
-
-            logger.info("Random image chosen")
-
-            painting_url = painting_json['primaryImageSmall' if small_image
-                                         else 'primaryImage']
-
-            painting_path = os.path.join(self.save_dir, f'{painting_id}.jpg')
-
-            response = requests.get(painting_url)
-            with open(painting_path, 'wb') as file:
-                file.write(response.content)
-
-            json_path = os.path.join(self.save_dir, f"{painting_id}.json")
-            with open(json_path, 'w', encoding='utf-8') as jf:
-                json.dump(painting_json, jf, indent=2, ensure_ascii=False)
-
-            image = cv2.imread(painting_path)
-            with open(json_path, 'r') as f:
-                metadata = json.load(f)
-
-            logger.info(f"Downloaded image {painting_id}")
-            return Artwork.create(image, metadata)
-
-        except Exception as e:
-            logger.error(f"Error downloading image: {e}")
-            return None
-
-    @timer
-    def process_artwork(self, artwork: Artwork,
-                        operations: Dict[OperationType,
-                                         Dict[str, Any]]) -> Dict[str, np.ndarray]:
-        """
-        Применяет список операций к изображению artwork.
-
-        Args:
-            artwork (Artwork): Объект искусства.
-            operations (Dict): Словарь применяемых к изображению операций.
-                            Ключ - название операции.
-                            Значение - словарь переменных для функции.
-
-        Raises:
-            ValueError: Передаваемые операции должны существовать.
-
-        Returns:
-            results (Dict): Словарь с итоговыми изображениями.
-        """
-        results = {}
-
-        logger.info("Image processing starts")
-
-        for op_type, params in operations.items():
-            if op_type not in self._operations:
-                logger.error(f"Operation {op_type} not registered")
-                raise ValueError(f"Operation {op_type} not exists!")
-
-            logger.debug(f"Executing operation {op_type.value}...")
+        for idx, obj_id in enumerate(ids, start=1):
             try:
-                results[op_type.value] = self._operations[op_type](artwork, **params)
+                resp = requests.get(f"{API_BASE}/{obj_id}")
+                painting_json = resp.json()
+                if not (painting_json.get('isPublicDomain') and painting_json.get('primaryImage')):  # noqa E501
+                    logger.debug(f"Image {obj_id} not public domain, skipping")
+                    continue
+
+                orig_dir = os.path.join(self.save_dir, "original")
+                os.makedirs(orig_dir, exist_ok=True)
+                img_path = os.path.join(orig_dir, f"{idx}_{obj_id}_original.jpg")
+                json_path = os.path.join(orig_dir, f"{idx}_{obj_id}_metadata.json")
+
+                with open(json_path, 'w', encoding='utf-8') as jf:
+                    json.dump(painting_json, jf, indent=2, ensure_ascii=False)
+
+                img_resp = requests.get(painting_json['primaryImage'])
+                with open(img_path, 'wb') as f:
+                    f.write(img_resp.content)
+
+                logger.info(f"Downloaded image {idx} (ID: {obj_id})")
+                yield idx, obj_id, img_path, json_path
+
             except Exception as e:
-                logger.error(f"Error in {op_type.value}: {e}")
-                raise
+                logger.error(f"Download failed for {obj_id}: {e}")
 
-            logger.info(f"Operation {op_type.value} executed")
+    def processing_generator(self, source: Generator) -> Generator[Tuple[int, int, Dict[str, np.ndarray]], None, None]:  # noqa E501
+        """
+        Генератор обработки (последовательная, без процессов).
 
-        logger.info("Processing finished")
+        args:
+            source: Генератор с индексом, айди объекта, путью к изображению и метаданным.
 
-        return results
+        Yields:
+            Индекс, айди объекта, результат обработки.
+        """
+        for index, obj_id, img_path, json_path in source:
+            logger.debug(f"Processing image {index} (ID={obj_id})")
+            try:
+                image = cv2.imread(img_path)
+                with open(json_path, 'r') as f:
+                    metadata = json.load(f)
+
+                artwork = Artwork.create(image, metadata)
+
+                results = {}
+                for op_type, params in self.operations.items():
+                    if op_type == OperationType.GREYSCALE:
+                        results['greyscale'] = artwork.color_to_greyscale()
+                    elif op_type == OperationType.BLUR:
+                        results['blur'] = artwork.gaussian_blur(**params)
+                    elif op_type == OperationType.SOBEL:
+                        results['sobel'] = artwork.sobel_transformation()
+                    elif op_type == OperationType.GAMMA:
+                        results['gamma'] = artwork.gamma_correction(**params)
+                    elif op_type == OperationType.HISTOGRAM:
+                        results['histogram'] = artwork.histogram_alignment()
+
+                logger.info(f"Processed image {index} (ID={obj_id})")
+
+                yield index, obj_id, results
+            except Exception as e:
+                logger.error(f"Processing failed for {index}: {e}")
+
+    def save_generator(self, source: Generator) -> Generator[str, None, None]:
+        """
+        Генератор сохранения.
+
+        Args:
+            source: Индекс, айди, результат.
+
+        Yields:
+            Строку с сообщением о сохранении изображения.
+        """
+        proc_dir = os.path.join(self.save_dir, "processed")
+        os.makedirs(proc_dir, exist_ok=True)
+        for index, obj_id, results in source:
+            for mode, img in results.items():
+                fname = f"{index}_{obj_id}_{mode}.jpg"
+                cv2.imwrite(os.path.join(proc_dir, fname), img)
+
+            logger.info(f"Saved processed image {index} (ID={obj_id})")
+            yield f"Image {index} (ID={obj_id}) saved"
+
+    @timer
+    def run_pipeline(self, ids: List[int]) -> None:
+        """
+        Запуск пайплайна.
+
+        Args:
+            ids: Айди изображений для обработки.
+        """
+        logger.info(f"Starting sync pipeline for {len(ids)} images (engine={self.engine})")  # noqa E501
+        gen1 = self.download_generator(ids)
+        gen2 = self.processing_generator(gen1)
+        for msg in self.save_generator(gen2):
+            logger.debug(msg)
+
+        logger.info("Sync pipeline completed")
 
 
 class AsyncImagePipeline:
     """Асинхронный пайплайн: скачивание -> обработка -> сохранение."""
-    def __init__(self, save_dir: str = DEFAULT_SAVE_DIR, engine: str = "python") -> None:
+    def __init__(self, save_dir: str = DEFAULT_SAVE_DIR, engine: str = "python",
+                 operations: Optional[Dict[OperationType, Dict[str, Any]]] = None,
+                 ) -> None:
         """
         Инициализация.
 
         Args:
             save_dir (str): Путь к папке для сохранения изображений.
-            engine (str): Способ обработки (чистый пайтон или с помощью Си).
+            engine (str): Способ обработки (python или c).
+            operations: Операции, которые нужно проделать с изображением.
         """
         self.save_dir = save_dir
-        self.engine = engine  # "python" или "c"
+        self.engine = engine
+        self.operations = default_operations if not operations else operations
         os.makedirs(save_dir, exist_ok=True)
-        # Если выбран С-движок, убедимся что расширение доступно
-        if engine == "c":
-            try:
-                from metetl.images.c_ext import convolve2d as _  # noqa: F401
-            except ImportError:
-                logger.warning("C extension not available, falling back to python engine")
-                self.engine = "python"
 
     async def download_one(
         self, session: aiohttp.ClientSession, obj_id: int, index: int
@@ -318,14 +285,19 @@ class AsyncImagePipeline:
 
             artwork = Artwork.create(image, metadata)
 
-            # Стандартный набор операций
-            results = {
-                "greyscale": artwork.color_to_greyscale(),
-                "blur": artwork.gaussian_blur(size=5, sigma=1.0),
-                "sobel": artwork.sobel_transformation(),
-                "gamma": artwork.gamma_correction(gamma=1.5),
-                "histogram": artwork.histogram_alignment(),
-            }
+            results: Dict[str, np.ndarray] = {}
+
+            for op_type, params in self.operations.items():
+                if op_type == OperationType.GREYSCALE:
+                    results["greyscale"] = artwork.color_to_greyscale()
+                elif op_type == OperationType.BLUR:
+                    results["blur"] = artwork.gaussian_blur(**params)
+                elif op_type == OperationType.SOBEL:
+                    results["sobel"] = artwork.sobel_transformation()
+                elif op_type == OperationType.GAMMA:
+                    results["gamma"] = artwork.gamma_correction(**params)
+                elif op_type == OperationType.HISTOGRAM:
+                    results["histogram"] = artwork.histogram_alignment()
 
             logger.info(f"Processed image {index} (ID={obj_id})")
 

@@ -5,8 +5,7 @@ import json
 import os
 from concurrent.futures import ProcessPoolExecutor
 from enum import Enum
-from random import choice
-from typing import Any, AsyncGenerator, Callable, Dict, Generator, List, Optional, Tuple
+from typing import Any, AsyncGenerator, Dict, Generator, List, Optional, Tuple
 
 import aiofiles
 
@@ -15,7 +14,8 @@ import aiohttp
 import cv2
 
 from metetl.decorators import async_timer, timer
-from metetl.images.models import Artwork
+from metetl.images.c_ext import convolve_uint8, is_available as c_ext_available
+from metetl.images.models import Artwork, ArtworkBW
 from metetl.logging_config import logger
 
 import numpy as np
@@ -43,6 +43,90 @@ default_operations: Dict[OperationType, Dict[str, Any]] = {
     OperationType.GAMMA: {"gamma": 1.5},
     OperationType.HISTOGRAM: {}
 }
+
+
+def _c_blur(artwork: Artwork, size: int = 5, sigma: float = 1.0) -> np.ndarray:
+    """
+    Гауссово размытие через C-свёртку.
+
+    Args:
+        artwork: Объект типа Artwork.
+        size: Размер ядра Гаусса.
+        sigma: Параметр размытия.
+
+    Returns:
+        ndarrray: Обработанное изображение.
+    """
+    kernel = ArtworkBW._gaussian_kernel(size, sigma).astype(np.float32)
+    if artwork.image.ndim == 3:
+        channels = cv2.split(artwork.image)
+        res_channels = [convolve_uint8(ch, kernel) for ch in channels]
+        return cv2.merge([np.clip(ch, 0, 255).astype(np.uint8) for ch in res_channels])
+    else:
+        res = convolve_uint8(artwork.image, kernel)
+        return np.clip(res, 0, 255).astype(np.uint8)
+
+
+def _c_sobel(artwork: Artwork) -> np.ndarray:
+    """
+    Выделение границ Собелем через C-свёртку.
+
+    Args:
+        artwork: Объект типа Artwork.
+
+    Returns:
+        norm (ndarray): Обработанное изображение.
+    """
+    gx = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=np.float32)
+    gy = np.array([[1, 2, 1], [0, 0, 0], [-1, -2, -1]], dtype=np.float32)
+    if artwork.image.ndim == 3:
+        grey = artwork.color_to_greyscale()
+    else:
+        grey = artwork.image
+
+    grad_x = convolve_uint8(grey, gx)
+    grad_y = convolve_uint8(grey, gy)
+    gradient = np.sqrt(grad_x.astype(np.float64)**2 + grad_y.astype(np.float64)**2)
+    norm = (gradient / gradient.max() * 255).astype(np.uint8)
+    return norm
+
+
+def apply_operations(
+    artwork: Artwork,
+    operations: Dict[OperationType, Dict[str, Any]],
+    engine: str
+) -> Dict[str, np.ndarray]:
+    """
+    Применяет заданные операции к artwork.
+
+    Args:
+        artwork: Объект типа Artwork.
+        operations: Словарь с операциями.
+        engine: Тип "движка" для обработки (python или C).
+
+    Returns:
+        Словарь {название_операции: np.ndarray}.
+    """
+    results = {}
+    for op_type, params in operations.items():
+        if op_type == OperationType.GREYSCALE:
+            results["greyscale"] = artwork.color_to_greyscale()
+        elif op_type == OperationType.BLUR:
+            if engine == "c" and c_ext_available():
+                results["blur"] = _c_blur(artwork, **params)
+            else:
+                results["blur"] = artwork.gaussian_blur(**params)
+        elif op_type == OperationType.SOBEL:
+            if engine == "c" and c_ext_available():
+                results["sobel"] = _c_sobel(artwork)
+            else:
+                results["sobel"] = artwork.sobel_transformation()
+        elif op_type == OperationType.GAMMA:
+            results["gamma"] = artwork.gamma_correction(**params)
+        elif op_type == OperationType.HISTOGRAM:
+            results["histogram"] = artwork.histogram_alignment()
+
+    return results
 
 
 class ImagePipeline:
@@ -123,18 +207,7 @@ class ImagePipeline:
 
                 artwork = Artwork.create(image, metadata)
 
-                results = {}
-                for op_type, params in self.operations.items():
-                    if op_type == OperationType.GREYSCALE:
-                        results['greyscale'] = artwork.color_to_greyscale()
-                    elif op_type == OperationType.BLUR:
-                        results['blur'] = artwork.gaussian_blur(**params)
-                    elif op_type == OperationType.SOBEL:
-                        results['sobel'] = artwork.sobel_transformation()
-                    elif op_type == OperationType.GAMMA:
-                        results['gamma'] = artwork.gamma_correction(**params)
-                    elif op_type == OperationType.HISTOGRAM:
-                        results['histogram'] = artwork.histogram_alignment()
+                results = apply_operations(artwork, self.operations, self.engine)
 
                 logger.info(f"Processed image {index} (ID={obj_id})")
 
@@ -284,19 +357,7 @@ class AsyncImagePipeline:
 
             artwork = Artwork.create(image, metadata)
 
-            results: Dict[str, np.ndarray] = {}
-
-            for op_type, params in self.operations.items():
-                if op_type == OperationType.GREYSCALE:
-                    results["greyscale"] = artwork.color_to_greyscale()
-                elif op_type == OperationType.BLUR:
-                    results["blur"] = artwork.gaussian_blur(**params)
-                elif op_type == OperationType.SOBEL:
-                    results["sobel"] = artwork.sobel_transformation()
-                elif op_type == OperationType.GAMMA:
-                    results["gamma"] = artwork.gamma_correction(**params)
-                elif op_type == OperationType.HISTOGRAM:
-                    results["histogram"] = artwork.histogram_alignment()
+            results = apply_operations(artwork, self.operations, self.engine)
 
             logger.info(f"Processed image {index} (ID={obj_id})")
 

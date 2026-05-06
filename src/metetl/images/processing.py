@@ -15,9 +15,8 @@ import aiohttp
 import cv2
 
 from metetl.decorators import async_timer, timer
+from metetl.images.models import Artwork
 from metetl.logging_config import logger
-
-from models import Artwork
 
 import numpy as np
 

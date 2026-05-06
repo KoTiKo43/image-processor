@@ -30,7 +30,7 @@ def main() -> None:
                                 help="Path to json with paintings to download")
     process_parser.add_argument("--output", default="images",
                                 help="Folder to save images")
-    process_parser.add_argument("--num", default=1,
+    process_parser.add_argument("--num", type=int, default=1,
                                 help="Amount of images to download and process")
     process_parser.add_argument("--engine", choices=["python", "c"], default="python",
                                 help="Processing engine (python or c)")
@@ -89,10 +89,10 @@ def main() -> None:
 
             if args.async_mode:
                 pipeline = AsyncImagePipeline(args.output, args.engine, operations=ops)
-                asyncio.run(pipeline.run_pipeline(ids))
+                asyncio.run(pipeline.run_pipeline(selected_ids))
             else:
                 pipeline = ImagePipeline(args.output, args.engine, operations=ops)
-                pipeline.run_pipeline(ids)
+                pipeline.run_pipeline(selected_ids)
 
         except Exception as e:
             logger.error(f"Processing failed: {e}")

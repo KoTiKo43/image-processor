@@ -25,7 +25,8 @@ dist/
 .flake8
 
 # Изображения и логи
-images/*.jpg
-image/*.json
+images/original/*.jpg
+images/original/*.json
+images/processed/*.jpg
 data/plots
 logs/*.log

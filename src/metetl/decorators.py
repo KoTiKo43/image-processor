@@ -5,7 +5,7 @@ import time
 from functools import wraps
 from typing import Callable
 
-from logging_config import logger
+from metetl.logging_config import logger
 
 
 def timer(func: Callable) -> Callable:

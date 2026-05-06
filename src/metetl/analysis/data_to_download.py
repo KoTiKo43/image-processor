@@ -2,7 +2,7 @@
 import csv
 import json
 
-from ..logging_config import logger
+from metetl.logging_config import logger
 
 
 def prepare_download_list(csv_path: str = "data/MetObjects.csv",

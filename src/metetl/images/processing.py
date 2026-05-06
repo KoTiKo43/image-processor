@@ -14,14 +14,14 @@ import aiohttp
 
 import cv2
 
+from metetl.decorators import async_timer, timer
+from metetl.logging_config import logger
+
 from models import Artwork
 
 import numpy as np
 
 import requests
-
-from ..decorators import async_timer, timer
-from ..logging_config import logger
 
 
 API_BASE = "https://collectionapi.metmuseum.org/public/collection/v1/objects"

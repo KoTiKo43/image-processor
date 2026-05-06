@@ -16,7 +16,6 @@ def setup_logging(log_file: str = "logs/metetl.log") -> logging.Logger:
     logger = logging.getLogger("metetl")
     logger.setLevel("DEBUG")
 
-    # Файловый обработчик — подробные DEBUG-сообщения
     fh = logging.FileHandler(log_file, encoding='utf-8')
     fh.setLevel("DEBUG")
     f_formatter = logging.Formatter(
@@ -26,7 +25,6 @@ def setup_logging(log_file: str = "logs/metetl.log") -> logging.Logger:
     )
     fh.setFormatter(f_formatter)
 
-    # Консольный обработчик — краткие INFO-сообщения
     ch = logging.StreamHandler(sys.stdout)
     ch.setLevel(logging.INFO)
     c_formatter = logging.Formatter('%(levelname)s: %(message)s')

@@ -1,5 +1,6 @@
-"""Функция и экземляр логгера"""
+"""Функция настройки логгера и его экземляр"""
 import logging
+import os
 import sys
 
 
@@ -13,6 +14,10 @@ def setup_logging(log_file: str = "logs/metetl.log") -> logging.Logger:
     Returns:
         logger: Экземляр логгера.
     """
+    log_dir = os.path.dirname(log_file)
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
+
     logger = logging.getLogger("metetl")
     logger.setLevel("DEBUG")
 

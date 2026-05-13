@@ -1,5 +1,6 @@
 """Декораторы
 timer
+async_timer
 """
 import time
 from functools import wraps

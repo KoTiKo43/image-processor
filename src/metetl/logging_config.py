@@ -1,7 +1,6 @@
 """Настройка логгера и его экземпляр"""
 import logging.config
 import os
-import sys
 
 import yaml
 

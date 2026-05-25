@@ -203,7 +203,8 @@ def compute_categorical_metrics(cat_df: pd.DataFrame) -> pd.DataFrame:
 
         probs = counts / n
         gini = 1 - (probs**2).sum()
-        entropy = -(probs * np.log(probs)).sum()
+        probs_nonzero = probs[probs > 0]
+        entropy = -(probs_nonzero * np.log(probs_nonzero)).sum()
         n_categories = (counts > 0).sum()
         norm_entropy = entropy / np.log(n_categories) if n_categories > 1 else 0
         enc = np.exp(entropy)

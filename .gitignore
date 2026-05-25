@@ -23,3 +23,10 @@ dist/
 
 # Файл конфигурации flake8
 .flake8
+
+# Изображения и логи
+images/original/*.jpg
+images/original/*.json
+images/processed/*.jpg
+data/plots
+logs/*.log

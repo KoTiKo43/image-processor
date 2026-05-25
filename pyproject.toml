@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=64", "wheel", "oldest-supported-numpy"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "metetl-akimov-6302"
+version = "0.1.0"
+description = "MET image ETL pipeline with C acceleration"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+dependencies = [
+    "numpy>=1.24",
+    "opencv-python>=4.6",
+    "pandas>=2.0",
+    "matplotlib>=3.7",
+    "requests>=2.28",
+    "aiohttp>=3.8",
+    "aiofiles>=23.0",
+]
+
+[project.scripts]
+metetl = "metetl.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+metetl = ["images/c_ext/*.c", "images/c_ext/*.h"]
